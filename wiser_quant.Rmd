@@ -1,8 +1,11 @@
 ---
 title: "quantitative strategy research using R"
-author: "Ru JIA"
+author: "贾茹"
 date: "2016-12-06"
-output: html_document
+output: 
+  html_document:
+    theme: readable
+    highlight: pygment
 ---
 
 ```{r setup, include=FALSE}
@@ -10,20 +13,24 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-# 一个最简单的CTA策略
+# 实战：一个最简单的CTA策略
 
 ## 策略逻辑
-- 趋势追踪策略。以低成本反复试探，试图捕捉大趋势。
+
+趋势追踪策略。以低成本反复试探，试图捕捉大趋势。
+
 - 价格突破前30天最高价开多、价格突破前30天最低价开空。
 - 1%移动止损。
 
-两个参数：`N = 30`, `lossrate = 0.01`
+这里有两个参数：`N = 30`, `lossrate = 0.01`
 
 ## 回测信息
 
-- 回测品种：螺纹钢连续合约rb
+- 回测品种：螺纹钢连续
 - 回测时间段： 2010-01-01 ~ 2016-10-21
 - 采用日度数据
+
+数据问题，没有处理主力合约换月，而是简单地拼接起来当做一个合约，实际中应该考虑移仓问题。简单起见，不考虑仓位调整问题，买卖都是一手，最多持有一手仓位
 
 ## 写策略
 
@@ -35,6 +42,7 @@ library(pipeR)
 library(ggplot2)
 
 load("data/rb_dominant_daily.rda")
+head(dt)
 
 # 参数取值
 N = 30
@@ -42,44 +50,41 @@ lossrate = .01
 
 # 手续费 & 滑点
 fee.rate <- 8e-5  #手续费单边万分之8
-slippage <- 2 * 1  # 滑点2个tick * 最小变动价位1
+slippage <- 2 * 1  # 滑点2个tick * rb最小变动价位1
+vm <- 10  # rb合约乘数为10。 volume_multiple  
 
-# 生成N_high, N_low
+# 生成N_high, N_low。 shift(...)注意不要用到未来函数。
 dt[, `:=`(
   N_high = shift(TTR::runMax(high, n = N), n = 1, type = "lag"),
   N_low = shift(TTR::runMin(low, n = N), n = 1, type = "lag")
 )]
 
-# # see signals
-# dt[, long_signal := high > N_high]
-# dt[, short_signal := low < N_low]
-# View(dt)
-# 
-# library(ggplot2)
-# dt[, time_index := 1:.N]
-# p <- ggplot(dt, aes(x = time_index, ymin = low, ymax = high))+ 
-#   geom_ribbon(aes(ymin = N_low, ymax = N_high), fill = alpha("yellow", .7)) + 
+# #看一下
+# p <- ggplot(dt, aes(x = 1:nrow(dt), ymin = low, ymax = high))+
+#   geom_ribbon(aes(ymin = N_low, ymax = N_high), fill = alpha("yellow", .7)) +
 #   geom_linerange()
 # p
 
 
 # 初始化
-ptr <- 1L
-position <- 0L
-stop_price <- NA_real_
-closed_profit <- 0.0
-position_profit <- 0.0
-fee <- 0.0
-out <- list()  # 逐日账户状态，list of list
-trades <- list()  # 逐笔交易记录，list of list
+ptr <- 1L  # ptr: pointer
+position <- 0L  # 当前持有的仓位，此处只有三个取值：{-1L, 0L, 1L}
+stop_price <- NA_real_   # 当持有仓位时，记录移动止损价。没有仓位时为NA_real_
+closed_profit <- 0.0   # 已平仓利润（累计）
+position_profit <- 0.0   # 持仓浮动盈亏
+fee <- 0.0   # 手续费（累计）
+out <- list()  # 逐日账户状态，list of list, for循环每循环一次，后面append一个list
+trades <- list()  # 逐笔交易记录，list of list。
 
-
-bar <- function(w){
+bar <- function(w){   # eg. bar("close") returns close price of this bar
   dt[[w]][ptr]
+}
+pre <- function(w){   # eg. pre("close") returns the previous close price
+  dt[[w]][ptr - 1]
 }
 
 # 循环
-for(ptr in 1:nrow(dt))
+for(ptr in 1:nrow(dt))   # ptr: pointer
 {
   # PART 0. 数据准备
   high <- bar("high")
@@ -90,14 +95,20 @@ for(ptr in 1:nrow(dt))
   if (is.na(sig_short) | is.na(sig_long)) next  # 跳过前N个
   
   # PART 1. 检查止损，更新止损点
-  if (position == 1L) {
-    stopifnot(!is.na(stop_price)) 
-    if (low < stop_price) {
+  
+  if (position != 0L) {  # 如果持有仓位。。。
+    stopifnot(!is.na(stop_price)) # stop_price不能是缺失值, 否则程序应停止报错
+    
+    stop_long <- position == 1L & low < stop_price  # bool
+    stop_short <- position == -1L & high > stop_price  # bool
+    
+    if (stop_long | stop_short){
       # 平掉现有仓位
-      leave_price <- stop_price - slippage
-      closed_profit <- closed_profit + (leave_price - enter_price)
-      fee <- fee + leave_price * fee.rate
+      leave_price <- stop_price - position * slippage  # long: - short: +
+      closed_profit <- closed_profit + position * (leave_price - enter_price) * vm
+      fee <- fee + leave_price * vm * fee.rate
       position_profit <- 0.0
+      
       # 添加交易记录
       trade_out <- list(
         enter_date = enter_date,
@@ -105,51 +116,28 @@ for(ptr in 1:nrow(dt))
         leave_date = bar("date"),
         leave_price = leave_price,
         side = position,
-        commission = leave_price * fee.rate + enter_price * fee.rate
+        commission = leave_price * vm * fee.rate + enter_price * vm * fee.rate
       ) 
       trades <- list.append(trades, trade_out)
-      rm(trade_out)
       
       # 重置状态变量
       position <- 0L
       stop_price <- NA_real_
       enter_price <- NA_real_
+      enter_date <- NA_real_
+      rm(trade_out)
       
     } else {
       # 更新止损点
-      stop_price <- max(stop_price, high * (1 - lossrate))
-    }
-    
-  } else if (position == -1L) {
-    stopifnot(!is.na(stop_price)) 
-    if (high > stop_price) {
-      # 平掉现有仓位
-      leave_price <- stop_price + slippage
-      closed_profit <- closed_profit + (enter_price - leave_price)
-      fee <- fee + leave_price * fee.rate
-      position_profit <- 0.0
-      
-      # 添加交易记录
-      trade_out <- list(
-        enter_date = enter_date,
-        enter_price = enter_price,
-        leave_date = bar("date"),
-        leave_price = leave_price,
-        side = position,
-        commission = leave_price * fee.rate + enter_price * fee.rate
-      ) 
-      trades <- list.append(trades, trade_out)
-      rm(trade_out)
-      
-      # 重置状态变量
-      position <- 0L
-      stop_price <- NA_real_
-      enter_price <- NA_real_
-      
-    } else {
-      stop_price <- min(stop_price, low * (1 + lossrate))
-    }
-  }
+      if (position == 1L){
+        stop_price <- max(stop_price, high * (1 - lossrate))
+      } else if (position == -1L){
+        stop_price <- min(stop_price, low * (1 + lossrate))
+      } else {
+        stop(102)
+      }
+    } # End if(stop_long | stop_short)
+  } # End if(position == 0L)
   
   # PART 2. 处理开仓信号
   if (position == 0L) {
@@ -160,14 +148,14 @@ for(ptr in 1:nrow(dt))
       enter_date <- bar("date")  # 记录入场时间
       stop_price <- enter_price * (1 - lossrate)  # 设好止损价
       position <- 1L
-      fee <- fee + enter_price * fee.rate
+      fee <- fee + enter_price * vm * fee.rate
     } else if (sig_short & !sig_long) {
       # 情况1.2：开空
       enter_price <- min(bar("N_low"), bar("open")) - slippage # 入场价格
       enter_date <- bar("date")  # 记录入场时间
       stop_price <- enter_price * (1 + lossrate)  # 设好止损价
       position <- -1L
-      fee <- fee + enter_price * fee.rate
+      fee <- fee + enter_price * vm * fee.rate
     } else if (sig_long & sig_short) {
       # 情况1.3：(极其少见)多空信号都出现了
       # you may add some message ...
@@ -182,23 +170,26 @@ for(ptr in 1:nrow(dt))
     # pass
   } else if (position == -1L){
     # 情况3：持有空仓 
+    # 持有空仓的情况下出现了开多信号：平掉现有的仓位，再反向开仓
+    # pass
   } else {
-    warning("101")
+    stop(101)
   }
   
   # PART 3. 保存信息至out变量
   position_profit <- ifelse(position == 0L, 
                             0.0, 
-                            position * (bar("close") - enter_price)
+                            position * (bar("close") - enter_price) * vm
                             ) # 计算持仓浮动盈亏
   bar_out <- list(
     date = bar("date"),
     position = position,
     closed_profit = closed_profit,
-    position_profit = position_profit
+    position_profit = position_profit,
+    close = bar("close"), 
+    market_value = bar("close") * vm
   )
   out <- list.append(out, bar_out)
-  #message(ptr)
 }
 
 out_dt <- list.stack(out, data.table = TRUE)
@@ -206,21 +197,149 @@ out_dt[, net_profit := closed_profit + position_profit - fee]
 #View(out_dt)
 trades_dt <- list.stack(trades, data.table = TRUE)
 trades_dt[, profit := side * (leave_price - enter_price) - commission]
-View(trades_dt)
+#View(trades_dt)
 
 plot(out_dt$net_profit, type = "l")
-plot(out_dt$position, type = "h")
 hist(trades_dt$profit, breaks = 50)
 ```
 
 
-
 ## 计算策略评价指标，自动生成报告
 
+```{r}
+# 计算每日收益率：
+out_dt[, profit := c(0, diff(net_profit))]
+out_dt[, market_value_MA60 := zoo::na.fill(TTR::SMA(market_value, n = 60), fill = "extend")]
+out_dt[, return := profit / market_value_MA60]
 
-## 参数敏感性分析
+calc_annual_return <- function(x){  # 根据日度收益率计算年化收益率
+  prod(1 + x) ^(250 / length(x)) - 1
+}
+calc_sharpe_ratio <- function(x){   # 根据日度收益率计算 sharpe ratio
+  calc_annual_return(x) / (sqrt(250) * sd(x))
+}
+# 年化收益率
+annual_return <- calc_annual_return(out_dt$return)
+# 夏普比
+sharpe_ratio <- calc_sharpe_ratio(out_dt$return)
+# 最大回撤
+out_dt[, cum_profit := cumsum(profit)]
+out_dt[, cummax_cum_profit := cummax(cum_profit)]
+out_dt[, drawdown := cum_profit - cummax_cum_profit]
+maxdrawdown <- min(out_dt$drawdown)
+maxdrawdown_idx <- which.min(out_dt$drawdown)
+maxdrawdown_per <- 
+  out_dt[maxdrawdown_idx, drawdown] / 
+  out_dt[maxdrawdown_idx, cummax_cum_profit]
+# 胜率
+win_prob <- mean(trades_dt$profit > 0)
+# 盈亏比
+win_loss_ratio <- 
+  (sum(trades_dt[profit > 0, profit]) / trades_dt[profit > 0, .N]) / 
+  (sum(trades_dt[profit <= 0, -profit]) / trades_dt[profit <= 0, .N])
 
 
-## 一些问题
-- 数据问题，没有处理主力合约换月，而是简单地拼接起来当做一个合约
-- 简单起见，不考虑仓位调整问题，都是一手
+indicators <- sprintf("
+年化收益率：%s
+Sharpe_Ratio: %f
+最大资金回撤：%f（百分比：%s）
+胜率：%s
+盈亏比：%f
+",
+scales::percent(annual_return), 
+sharpe_ratio, 
+maxdrawdown, scales::percent(maxdrawdown_per),
+scales::percent(win_prob),
+win_loss_ratio
+)
+cat(indicators)
+```
+
+
+
+## 参数优化
+
+```{r, eval=FALSE}
+rm(list = ls())
+# 全局变量
+load("data/rb_dominant_daily.rda")
+fee.rate <- 8e-5  
+slippage <- 2 * 1  
+vm <- 10
+gvars <- ls()  # global variables. 收集全局变量，后面并行计算要用。
+source("RunBackTest.R")  # 加载 RunBackTest() 函数
+
+# 参数集合
+N_set <- seq(10, 100, 10)  # 参数N：10, 20, 30, ..., 100
+lossrate_set <- seq(.5, 5, .5) / 100  # 移动止损参数：1%, 1.5%, 2%, ... 5%
+para_lst <- 
+  expand.grid(N = N_set, lossrate = lossrate_set) %>>% 
+  list.parse()   # 参数集合 
+
+#str(para_lst)
+#result <- RunBackTest(para = para_lst[[1]])
+#result <- RunBackTest(para = para_lst[[100]])
+
+library(foreach)
+library(doParallel)
+
+file.create("log.txt")  # 日志文件
+detectCores()  # 看一下你的电脑有几个核
+cl <- makeCluster(2, outfile = "log.txt")  # 使用2个核，并指定outfile
+clusterExport(cl, varlist = gvars) # 将全局变量分发到各个核，在每个核上加载必要的包
+clusterEvalQ(cl, expr = {
+  library(data.table)
+  library(rlist)
+  library(pipeR)
+})
+# 开始并行计算
+results <- foreach(x = para_lst) %dopar%
+{
+  tryCatch(
+    {
+      cat(sprintf("Start Running [N = %s, lossrate = %s] ... ", x$N, x$lossrate),
+          file = "log.txt", append = TRUE)
+      rst <- RunBackTest(x)  # 回测一个参数
+      cat(sprintf("final_profit: %s \n", rst$final_profit), file = "log.txt", append = TRUE)
+      return(rst)
+    },
+    error = function(e) {
+      error_into <- sprintf("When running [ N = %s, lossrate = %s ] Raised Error : %s \n", x$N, x$K, x$ATR_N, e)
+        cat(error_into, file = "log.txt", append = TRUE)
+        return(error_into)
+    }
+  ) # End tryCatch
+}
+stopCluster(cl)
+
+results_dt <- rbindlist(results)
+results_dt
+
+
+# 可视化
+p <- ggplot(data = results_dt, aes(x = N, y = lossrate, fill = final_profit)) + 
+  geom_tile(color = "black", alpha = .9) + 
+  scale_fill_gradientn(colors = c("slateblue", "seagreen", "orange", "red", "darkred")) + 
+  theme_classic()
+p
+```
+
+### 注意点
+
+#### 关于并行计算
+参数优化往往涉及到大规模的计算，需要我们了解一些并行计算的知识。R中常见的并行计算 包： `parallel, snow, doparallel, foreach, ...`   
+
+我的几点经验：
+
+- 大规模的计算一定要有容错机制，你不可能考虑到所有的情况。
+- 算好一个，保存一个，防止停电之类的突发状况。
+- 最好花点时间写日志文件。一是当进度条，二是方便程序运行时实时监控，早发现潜在的问题
+
+#### 关于性能
+
+- 因为计算量较大，所以需要我们在写策略的时候就注意性能问题，尽量使用高性能的包，例如`data.table`
+- 性能分析/可视化包`profvis`，Rstudio中也集成了profiling功能。
+- 有时候还要用到Rcpp，甚至是直接在cpp中写。
+
+
+
