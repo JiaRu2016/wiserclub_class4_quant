@@ -12,6 +12,60 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# 量化投资研究常用工具
+
+#### R
+
+- 至少要刷过一遍 Advanced R。是否听说过以下概念？environment, functional progreamming, evaluation, expression, ... 不要求了如指掌，但至少听说过。
+- 会调试代码，代码有问题能自己独立解决。
+- 了解术语，会google。能简洁而准确地描述自己遇到的问题，并通过google快速找到解决方案。
+
+#### R packages
+
+- 结构化数据 data.table
+- 非结构化数据 rlist
+- 文本数据与正则表达式 stringr
+- 可视化 ggplot2
+- 高性能 Rcpp
+- 并行计算 parallel, foreach 
+- 数据库相关 mongolite, jsonlite, RSQLite, rredis, DBI
+- 网络爬虫 rvest, RCurl
+
+#### 其他工具
+
+1. 数据库
+  - 关系型数据库 MySQL, SQLite
+  - 非关系型数据库 mongoDB, Redis
+2. 版本控制工具 git
+
+
+#### 回测平台
+
+1. 在线回测平台：优矿(uqer)、米筐(RiceQuant)、聚宽(JoinQuant)
+
+- 中国版Quantopian。
+- 使用python
+- 数据都是现成的，常用指标都自动计算好了，无需自己造轮子。
+- 活跃的社区。
+- 但据说也有一些坑：比如性能问题。
+
+传送门：
+
+> 优矿 https://uqer.io/home/    
+> 米筐 https://www.ricequant.com/    
+> 聚宽 https://www.joinquant.com/    
+
+2. 程序化交易软件：国泰安Quantrader, wind量化平台, 国信Tradestation, 交易开拓者tradeblazer ...
+
+3. R语言量化包：quantstrat 
+
+> http://timtrice.github.io/backtesting-strategies/index.html
+
+# 量化策略分类
+
+- 期货策略：趋势类，反转类，套利类
+- 股票策略：多因子模型，量化选股， T+0策略
+
 
 # 实战：一个最简单的CTA策略
 
@@ -33,6 +87,10 @@ knitr::opts_chunk$set(echo = TRUE)
 数据问题，没有处理主力合约换月，而是简单地拼接起来当做一个合约，实际中应该考虑移仓问题。简单起见，不考虑仓位调整问题，买卖都是一手，最多持有一手仓位
 
 ## 写策略
+
+这里不使用任何回测框架，全部自己写
+
+基本思路很简单，就是写一个for循环，依次扫过每一个bar, 判断止损条件，开仓信号，在每个bar结束时更新账户状态，同时记录每笔交易的信息。
 
 ```{r}
 rm(list = ls())
@@ -59,11 +117,14 @@ dt[, `:=`(
   N_low = shift(TTR::runMin(low, n = N), n = 1, type = "lag")
 )]
 
-# #看一下
-# p <- ggplot(dt, aes(x = 1:nrow(dt), ymin = low, ymax = high))+
-#   geom_ribbon(aes(ymin = N_low, ymax = N_high), fill = alpha("yellow", .7)) +
-#   geom_linerange()
-# p
+#看一下
+n = 200   # 数据太多，看不清，只看前n个
+p <- ggplot(dt[1:n], aes(x = 1:n))+
+  geom_linerange(aes(ymin = low, ymax = high)) +   # high low
+  geom_point(aes(y = N_high), color = "red") +
+  geom_point(aes(y = N_low), color = "green") +
+  theme_bw()
+p
 
 
 # 初始化
@@ -89,8 +150,8 @@ for(ptr in 1:nrow(dt))   # ptr: pointer
   # PART 0. 数据准备
   high <- bar("high")
   low <- bar("low")
-  sig_long <- bar("high") > bar("N_high")
-  sig_short <- bar("low") < bar("N_low")
+  sig_long <- high > bar("N_high")
+  sig_short <- low < bar("N_low")
   
   if (is.na(sig_short) | is.na(sig_long)) next  # 跳过前N个
   
@@ -191,20 +252,45 @@ for(ptr in 1:nrow(dt))   # ptr: pointer
   )
   out <- list.append(out, bar_out)
 }
+```
 
+
+```{r}
+# 生成两个data.table: out_dt & trade_dt
+# out_dt: 每天结束时的账户状态（已平仓利润，头寸，浮盈浮亏，保证金占用，其他信息）
+# trade_dt: 每笔交易明细（入场时间，入场价格，离场时间，离场价格，多空）
 out_dt <- list.stack(out, data.table = TRUE)
 out_dt[, net_profit := closed_profit + position_profit - fee]
 #View(out_dt)
+
 trades_dt <- list.stack(trades, data.table = TRUE)
 trades_dt[, profit := side * (leave_price - enter_price) - commission]
 #View(trades_dt)
+```
 
+
+```{r}
+# 资金曲线
 plot(out_dt$net_profit, type = "l")
+# 每笔交易利润分布：符合趋势追踪类策略的特点
 hist(trades_dt$profit, breaks = 50)
 ```
 
 
+
+
 ## 计算策略评价指标，自动生成报告
+
+评价一个策略好不好，有很多指标:
+
+- 最大回撤 & 最大回撤周期：买入产品后最糟糕的情况，是非常重要的一个风险指标。越低越好。
+- 年化收益率
+- Sharpe ratio: 单位风险所获得的超额回报率。越高越好
+- 最大连续亏损次数，最大单周/单月亏损幅度。同理，估计策略最坏的情况。
+- 胜率，盈亏比
+- ...
+
+这里算几个最常见的指标：
 
 ```{r}
 # 计算每日收益率：
@@ -233,7 +319,7 @@ maxdrawdown_per <-
   out_dt[maxdrawdown_idx, cummax_cum_profit]
 # 胜率
 win_prob <- mean(trades_dt$profit > 0)
-# 盈亏比
+# 平均盈亏比
 win_loss_ratio <- 
   (sum(trades_dt[profit > 0, profit]) / trades_dt[profit > 0, .N]) / 
   (sum(trades_dt[profit <= 0, -profit]) / trades_dt[profit <= 0, .N])
@@ -244,7 +330,7 @@ indicators <- sprintf("
 Sharpe_Ratio: %f
 最大资金回撤：%f（百分比：%s）
 胜率：%s
-盈亏比：%f
+平均盈亏比：%f
 ",
 scales::percent(annual_return), 
 sharpe_ratio, 
@@ -258,6 +344,10 @@ cat(indicators)
 
 
 ## 参数优化
+
+策略往往带有参数，我们经常要对一个策略做参数寻优。最简单的方法就是用不同的参数跑策略，比较各个参数下的结果。本例中只有两个参数，评价标准就简单粗暴的采用最终收益。
+
+参数优化计算量往往较大，需要了解一些并行计算的知识。
 
 ```{r, eval=FALSE}
 rm(list = ls())
@@ -310,11 +400,19 @@ results <- foreach(x = para_lst) %dopar%
     }
   ) # End tryCatch
 }
-stopCluster(cl)
+stopCluster(cl)  # 计算完毕，停掉cluster
 
 results_dt <- rbindlist(results)
 results_dt
 
+save(results_dt, file = "data/result_dt.rda")
+```
+
+
+画出二维热力图：
+```{r}
+load("data/result_dt.rda")
+results_dt
 
 # 可视化
 p <- ggplot(data = results_dt, aes(x = N, y = lossrate, fill = final_profit)) + 
@@ -327,13 +425,15 @@ p
 ### 注意点
 
 #### 关于并行计算
-参数优化往往涉及到大规模的计算，需要我们了解一些并行计算的知识。R中常见的并行计算 包： `parallel, snow, doparallel, foreach, ...`   
+
+R中常见的并行计算包： `parallel, snow, doparallel, foreach, ...`   
 
 我的几点经验：
 
 - 大规模的计算一定要有容错机制，你不可能考虑到所有的情况。
-- 算好一个，保存一个，防止停电之类的突发状况。
-- 最好花点时间写日志文件。一是当进度条，二是方便程序运行时实时监控，早发现潜在的问题
+- 算好一个，保存一个，最好再花点时间写日志文件，一是防止停电之类的突发状况，二是方便程序运行时实时监控，早发现潜在的问题。
+- 负载均衡问题。最好用自动安排负载均衡的包或函数，比如`foreach`, `parallel::parLapplyLB()`
+- Windows 与 Mac/Linux 环境下有一点区别。
 
 #### 关于性能
 
