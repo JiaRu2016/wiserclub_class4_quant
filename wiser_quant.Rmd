@@ -2,10 +2,7 @@
 title: "quantitative strategy research using R"
 author: "贾茹"
 date: "2016-12-06"
-output: 
-  html_document:
-    theme: readable
-    highlight: pygment
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -52,7 +49,8 @@ knitr::opts_chunk$set(echo = TRUE)
 wind，新浪，雅虎API等
 
 ### 研究、回测平台
-1. 在线回测平台：优矿(uqer)、米筐(RiceQuant)、聚宽(JoinQuant)
+
+#### 在线回测平台：优矿(uqer)、米筐(RiceQuant)、聚宽(JoinQuant)
 
 - 中国版Quantopian。
 - 使用python
@@ -66,9 +64,10 @@ wind，新浪，雅虎API等
 > 米筐 https://www.ricequant.com/    
 > 聚宽 https://www.joinquant.com/    
 
-2. 程序化交易软件：国泰安Quantrader, wind量化平台, 国信Tradestation, 交易开拓者tradeblazer ...
+#### 国内程序化交易软件
+国泰安Quantrader, wind量化平台, 国信Tradestation, 交易开拓者tradeblazer ...
 
-3. R语言量化包：quantstrat 
+#### R语言量化包：quantstrat 
 
 > http://timtrice.github.io/backtesting-strategies/index.html
 
@@ -414,7 +413,7 @@ results <- foreach(x = para_lst) %dopar%
 stopCluster(cl)  # 计算完毕，停掉cluster
 
 results_dt <- rbindlist(results)
-results_dt
+head(results_dt)
 
 save(results_dt, file = "data/result_dt.rda")
 ```
@@ -423,7 +422,6 @@ save(results_dt, file = "data/result_dt.rda")
 画出二维热力图：
 ```{r}
 load("data/result_dt.rda")
-results_dt
 
 # 可视化
 p <- ggplot(data = results_dt, aes(x = N, y = lossrate, fill = final_profit)) + 
