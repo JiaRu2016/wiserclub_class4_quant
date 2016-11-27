@@ -14,13 +14,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # 量化投资研究常用工具
 
-#### R
+<!-- 实习时经常用到的编程方面的东西 -->
+## 在公司做量化研究时经常用到如下工具
+
+### R
 
 - 至少要刷过一遍 Advanced R。是否听说过以下概念？environment, functional progreamming, evaluation, expression, ... 不要求了如指掌，但至少听说过。
 - 会调试代码，代码有问题能自己独立解决。
 - 了解术语，会google。能简洁而准确地描述自己遇到的问题，并通过google快速找到解决方案。
 
-#### R packages
+### R packages
 
 - 结构化数据 data.table
 - 非结构化数据 rlist
@@ -31,16 +34,24 @@ knitr::opts_chunk$set(echo = TRUE)
 - 数据库相关 mongolite, jsonlite, RSQLite, rredis, DBI
 - 网络爬虫 rvest, RCurl
 
-#### 其他工具
+### 数据库
+- 关系型数据库 MySQL, SQLite
+- 非关系型数据库 mongoDB, Redis
 
-1. 数据库
-  - 关系型数据库 MySQL, SQLite
-  - 非关系型数据库 mongoDB, Redis
-2. 版本控制工具 git
+最基本的增删改查操作；以及通过R连接、操作数据库
+
+### 版本控制工具 git
+
+- 自己本地和远程的版本控制
+- 团队协作
 
 
-#### 回测平台
+## 如果你是自己做量化研究。。。
 
+### 数据来源
+wind，新浪，雅虎API等
+
+### 研究、回测平台
 1. 在线回测平台：优矿(uqer)、米筐(RiceQuant)、聚宽(JoinQuant)
 
 - 中国版Quantopian。
