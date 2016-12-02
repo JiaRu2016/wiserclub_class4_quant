@@ -1,5 +1,5 @@
 ---
-title: "quantitative strategy research using R"
+title: "Quantitative Strategy Research using R"
 author: "WISERCLUB 贾茹"
 date: "2016-12-06"
 output: github_document
@@ -13,10 +13,33 @@ knitr::opts_chunk$set(echo = TRUE)
 1. 量化投资研究之工具篇
 2. 量化策略研究之思想篇
 3. 实战：一个经典CTA策略的R语言实现
-  <!-- - 策略实现 -->
-  <!-- - 策略评价指标 -->
-  <!-- - 参数调优 -->
 
+# 书单
+
+量化投资基础入门资料（转自易金超学长）
+
+```
+叙事故事类：
+1，解读量化投资：西蒙斯用公式打败市场的故事
+2，打开量化投资的黑箱 Inside the black box, Rishi Narang
+3，打开高频交易的黑箱 All about high frequency trading，迈克尔.德宾
+4，宽客人生：从物理学家到数量金融大师的传奇， 德曼Derman
+5，宽客：华尔街顶级数量金融大师的另类人生， 斯科特•帕特森
+备注：这些书基本上是故事类书籍，读起来非常快，可以对量化投资有一个大概的了解，包括量化历史，量化策略以及量化门派等。
+
+理性普及类：
+6，通向财务自由之路(原书第2版•珍藏版)，范 K.撒普 (Van K.Tharp)
+7，交易圣经:系统交易赢利要诀，布伦特•奔富 (Brent Penfold)
+备注：这两本书应该来说对于理性认识投资，特别是形成系统性交易思维还是挺有帮助的。
+
+专业基础类(尽可能在学校就完成训练)：
+8, 统计与金融，Statistics and Finanace, by David Ruppert
+9, Option, future and other derivatives, by John Hull
+10, The Econometrics of Financial Markets, by John Y. Campbell, Andrew Lo , A. Craig MacKinlay
+11, Asset Pricing, by John H. Cochrane
+备注：8基本上对于不是金融专业的人来说，非常好的普及知识，9也是。
+10应该是很多做ALPHA以及事件驱动的好书，11是ALPHA的基础书。
+```
 
 # 量化投资研究之工具篇
 
@@ -30,6 +53,7 @@ knitr::opts_chunk$set(echo = TRUE)
 - 结构化数据 data.table
 - 非结构化数据 rlist
 - 文本数据与正则表达式 stringr
+- 时间序列 xts zoo lubridate 
 - 可视化 ggplot2
 - 高性能 Rcpp
 - 并行计算 parallel, foreach 
@@ -73,16 +97,15 @@ wind，新浪，雅虎API等
 
 传送门：
 
-> 优矿 https://uqer.io/home/    
-> 米筐 https://www.ricequant.com/    
-> 聚宽 https://www.joinquant.com/    
+- 优矿 https://uqer.io/home/    
+- 米筐 https://www.ricequant.com/    
+- 聚宽 https://www.joinquant.com/    
 
 #### 国内程序化交易软件
 国泰安Quantrader, wind量化平台, 国信Tradestation, 交易开拓者tradeblazer ...
 
 #### R语言量化包：quantstrat 
-
-> http://timtrice.github.io/backtesting-strategies/index.html
+http://timtrice.github.io/backtesting-strategies/index.html
 
 # 量化策略研究之思想篇
 
@@ -472,4 +495,34 @@ R中常见的并行计算包： `parallel, snow, doparallel, foreach, ...`
 - 有时候还要用到Rcpp，甚至是直接在cpp中写。
 
 
-
+# 招聘广告一则
+```
+深圳凌云至善科技有限公司
+ 【IT开发/运维工程师】（全职，若干）
+工作职责：
+1）软件系统维护与测试；
+2）数据库管理；
+3）服务器与硬件设施运维。
+职位资格要求：
+1）重点高校毕业，本科及以上学历，计算机相关专业；
+2）熟练掌握 C# 和 C/C++ 并有相关项目开发和测试经验；
+3）熟悉 MongoDB 和 Redis 数据库的管理和维护，并具有较好的数据处理能力；
+4）具有 Linux 本地和远程服务器管理和维护经验；
+5）有较强的责任心、严谨的工作态度和较好的沟通能力。
+【量化研究员】（全职，若干）
+工作职责：
+1）市场及交易数据处理、建模与分析；
+2）策略开发、回测、评估与分析；
+3）组合绩效分析与优化；
+4）其他专题研究。
+职位资格要求：
+1）重点高校毕业，硕士及以上学历（技术性专业、数学、物理、计算机、金融工程、统计学等）；
+2）熟悉中国证券、期货、期权等市场规则，通过证券从业或者基金从业资格考试，具有国内外对冲基金或定量分析经验者优先；
+3）具备良好的编程与数据处理能力，能够熟练使用R/Python/Matlab等数据分析工具中的一种，具备C++/C#等通用编程经验者优先；
+4）具备操作关系型数据库和MongoDB/Redis数据库经验者优先；
+5）具备学术研究、数学/统计建模经验者优先；
+6）具备快速学习的能力，重视细节的品质，以及较好的表达能力。
+欢迎加入凌云至善，待遇从优，根据条件税前工资区间在10000-30000之间，具体面谈，工作地点深圳。
+由于精力有限，请投简历之前看清楚岗位要求，非诚勿扰。
+有意者请将简历发送至hr@lyzsfund.com。
+```
