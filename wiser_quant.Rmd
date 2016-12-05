@@ -145,6 +145,13 @@ http://timtrice.github.io/backtesting-strategies/index.html
 
 基本思路很简单，就是写一个for循环，依次扫过每一个bar, 判断止损条件，开仓信号，在每个bar结束时更新账户状态，同时记录每笔交易的信息。
 
+回测结果主要是两个表：
+
+1. 逐日的账户状态（每天的：持仓状态，已平仓利润，持仓盈亏，手续费，保证金，其他策略signal等
+2. 逐笔交易明细（每笔交易的：入场时间，入场价格，离场时间，离场价格，多or空
+
+根据这两个表可以做更进一步的分析。
+
 ```{r}
 rm(list = ls())
 library(data.table)
@@ -154,18 +161,36 @@ library(ggplot2)
 
 load("data/rb_dominant_daily.rda")
 head(dt)
-plot(dt$close, type = "l")  # 
+#View(dt)  # 看一下数据结构
+plot(dt$close, type = "l")  # 有几波超级大趋势可以抓住
 
 # 参数取值
 N = 30
-lossrate = .01
+lossrate = .03
 
 # 手续费 & 滑点
-fee.rate <- 8e-5  #手续费单边万分之8
-slippage <- 2 * 1  # 滑点2个tick * rb最小变动价位1
+fee.rate <- 8e-5  #手续费单边万分之0.8 
+slippage <- 2 * 1  # 滑点2个tick * rb最小变动价位1  
 vm <- 10  # rb合约乘数为10。 volume_multiple  
+```
+注意：
+```
+螺纹钢标准合约请看 http://www.shfe.com.cn/products/rb/standard/194.html
+报价单位 4579元/吨
+合约乘数 10吨/手
+那么每张合约价值 = 45790元
+每买卖一手合约手续费为 45790元 * 8e-5 = 3.6632 元
 
-# 生成N_high, N_low。 shift(...)注意不要用到未来函数。
+"2个滑点"意思是：模拟成交时的价格为理论价格向不利方向变动2个最小变动价位
+1. 实际成交情况不如回测时那么理想。
+2. 冲击成本，尤其是大资金量。
+```
+
+```{r, warning=FALSE}
+
+# 生成N日最高价、N日最低价 N_high, N_low。 
+# 这一步也可以放到for循环里面，但从代码效率方面考虑把它写在for循环外面
+# 这种情况一定要注意：不要用到未来函数。 shift(...)  
 dt[, `:=`(
   N_high = shift(TTR::runMax(high, n = N), n = 1, type = "lag"),
   N_low = shift(TTR::runMin(low, n = N), n = 1, type = "lag")
@@ -175,75 +200,89 @@ dt[, `:=`(
 n = 200   # 数据太多，看不清，只看前n个
 p <- ggplot(dt[1:n], aes(x = 1:n))+
   geom_linerange(aes(ymin = low, ymax = high)) +   # high low
-  geom_point(aes(y = N_high), color = "red") +
-  geom_point(aes(y = N_low), color = "green") +
+  geom_point(aes(y = N_high), color = "red", na.rm = TRUE) +
+  geom_point(aes(y = N_low), color = "green", na.rm = TRUE) +
   theme_bw()
 p
+```
 
+```{r}
+# 下面开始回测。。。
 
-# 初始化
-ptr <- 1L  # ptr: pointer
-position <- 0L  # 当前持有的仓位，此处只有三个取值：{-1L, 0L, 1L}
-stop_price <- NA_real_   # 当持有仓位时，记录移动止损价。没有仓位时为NA_real_
+# 初始化状态变量
+ptr <- 1L  # ptr: pointer “指针”  for ( ptr in 1:nrow(dt) ) {...backtest code...}
+position <- 0L  # 当前持有的仓位。只有三个取值：{-1L, 0L, 1L}，不考虑仓位调整问题。
+stop_price <- NA_real_   # 移动止损价。没有仓位时为NA_real_
+rec_stop_price <- NA_real_   # **记录**移动止损价。
 closed_profit <- 0.0   # 已平仓利润（累计）
-position_profit <- 0.0   # 持仓浮动盈亏
+position_profit <- 0.0   # 当前持仓浮动盈亏
 fee <- 0.0   # 手续费（累计）
+
+
 out <- list()  # 逐日账户状态，list of list, for循环每循环一次，后面append一个list
 trades <- list()  # 逐笔交易记录，list of list。
-
-bar <- function(w){   # eg. bar("close") returns close price of this bar
+# Two util functions
+bar <- function(w){   
   dt[[w]][ptr]
 }
-pre <- function(w){   # eg. pre("close") returns the previous close price
-  dt[[w]][ptr - 1]
+pre <- function(w, n = 1){   
+  dt[[w]][(ptr - n - 1):(ptr - 1)]           
 }
+# eg1. bar("close") returns close price of this bar
+# eg2. pre("close") returns the previous close price
+# eg3. pre("high", 30) returns the high prices of latest 30 days
 
 # 循环
 for(ptr in 1:nrow(dt))   # ptr: pointer
 {
   # PART 0. 数据准备
-  high <- bar("high")
-  low <- bar("low")
-  sig_long <- high > bar("N_high")
-  sig_short <- low < bar("N_low")
+  high <- bar("high")  # 当前bar最高价
+  low <- bar("low")    # 当前bar最低价
+  sig_long <- high > bar("N_high")  # 开多信号 bool
+  sig_short <- low < bar("N_low")   # 开空信号 bool
   
   if (is.na(sig_short) | is.na(sig_long)) next  # 跳过前N个
   
   # PART 1. 检查止损，更新止损点
   
   if (position != 0L) {  # 如果持有仓位。。。
-    stopifnot(!is.na(stop_price)) # stop_price不能是缺失值, 否则程序应停止报错
+    stopifnot(!is.na(stop_price)) # stop_price 不能是缺失值, 否则程序应停止报错
     
-    stop_long <- position == 1L & low < stop_price  # bool
-    stop_short <- position == -1L & high > stop_price  # bool
+    # 是否触及止损点：两个bool变量
+    stop_long <- position == 1L & low < stop_price  # bool 多头时是否触及止损
+    stop_short <- position == -1L & high > stop_price  # bool 空头时是否触及止损
     
-    if (stop_long | stop_short){
+    if (stop_long | stop_short){   
+      # 如果触及止损点。为了简洁两种情况写在一起了，也可以分开写。
+      
       # 平掉现有仓位
-      leave_price <- stop_price - position * slippage  # long: - short: +
+      leave_price <- stop_price - position * slippage  # long: - short: + 
       closed_profit <- closed_profit + position * (leave_price - enter_price) * vm
       fee <- fee + leave_price * vm * fee.rate
       position_profit <- 0.0
       
       # 添加交易记录
       trade_out <- list(
-        enter_date = enter_date,
-        enter_price = enter_price,
-        leave_date = bar("date"),
-        leave_price = leave_price,
-        side = position,
-        commission = leave_price * vm * fee.rate + enter_price * vm * fee.rate
+        enter_date = enter_date,  # 入场时间（开仓时会定义这个变量）
+        enter_price = enter_price,    # 入场价格（开仓时会定义这个变量）
+        leave_date = bar("date"),  # 离场时间：就是当前bar的date值
+        leave_price = leave_price,  # 离场价格：刚刚算好的。
+        side = position,   # 买卖方向：多还是空
+        commission = leave_price * vm * fee.rate + enter_price * vm * fee.rate #佣金
       ) 
       trades <- list.append(trades, trade_out)
       
       # 重置状态变量
       position <- 0L
+      rec_stop_price <- stop_price
       stop_price <- NA_real_
       enter_price <- NA_real_
       enter_date <- NA_real_
       rm(trade_out)
       
-    } else {
-      # 更新止损点
+    } else { # 如果没有触及止损点。。。
+      rec_stop_price <- stop_price
+      # 更新移动止损点
       if (position == 1L){
         stop_price <- max(stop_price, high * (1 - lossrate))
       } else if (position == -1L){
@@ -259,18 +298,20 @@ for(ptr in 1:nrow(dt))   # ptr: pointer
     # 情况1：没有任何仓位
     if (sig_long & !sig_short) {
       # 情况1.1：开多
-      enter_price <- max(bar("N_high"), bar("open")) + slippage  # 入场价格
+      enter_price <- max(bar("N_high"), bar("open")) + slippage  # 记录入场价格
       enter_date <- bar("date")  # 记录入场时间
       stop_price <- enter_price * (1 - lossrate)  # 设好止损价
-      position <- 1L
-      fee <- fee + enter_price * vm * fee.rate
+      rec_stop_price <- stop_price
+      position <- 1L   # position 切换成 1L
+      fee <- fee + enter_price * vm * fee.rate  # 累加手续费
     } else if (sig_short & !sig_long) {
       # 情况1.2：开空
-      enter_price <- min(bar("N_low"), bar("open")) - slippage # 入场价格
-      enter_date <- bar("date")  # 记录入场时间
-      stop_price <- enter_price * (1 + lossrate)  # 设好止损价
-      position <- -1L
-      fee <- fee + enter_price * vm * fee.rate
+      enter_price <- min(bar("N_low"), bar("open")) - slippage 
+      enter_date <- bar("date")  
+      stop_price <- enter_price * (1 + lossrate)  
+      rec_stop_price <- stop_price
+      position <- -1L   # position 切换成 -1L
+      fee <- fee + enter_price * vm * fee.rate  
     } else if (sig_long & sig_short) {
       # 情况1.3：(极其少见)多空信号都出现了
       # you may add some message ...
@@ -291,30 +332,39 @@ for(ptr in 1:nrow(dt))   # ptr: pointer
     stop(101)
   }
   
-  # PART 3. 保存信息至out变量
+  # PART 3. 每个bar结束时，保存信息至out变量
   position_profit <- ifelse(position == 0L, 
                             0.0, 
                             position * (bar("close") - enter_price) * vm
                             ) # 计算持仓浮动盈亏
   bar_out <- list(
-    date = bar("date"),
-    position = position,
-    closed_profit = closed_profit,
-    position_profit = position_profit,
+    date = bar("date"),   
+    position = position,   # bar结束时 持仓情况 %in% {1L, 0L, -1L} 
+    closed_profit = closed_profit,   # 已平仓利润
+    position_profit = position_profit,  # 持仓盈亏
     close = bar("close"), 
-    market_value = bar("close") * vm
+    market_value = bar("close") * vm,   # 合约价值
+    margin = abs(position) * bar("close") * vm,  # 保证金占用
+    N_high = bar("N_high"),
+    N_low = bar("N_low"),
+    low = low, 
+    high = high,
+    stop_price = rec_stop_price  # 如果有持仓的话，记录移动止损价。
   )
+  
   out <- list.append(out, bar_out)
+  rec_stop_price <- NA_real_
 }
 ```
 
+生成两个data.table: `out_dt` & `trade_dt`
+
+- out_dt: 每天结束时的账户状态（已平仓利润，头寸，浮盈浮亏，保证金占用，其他信息）
+- trade_dt: 每笔交易明细（入场时间，入场价格，离场时间，离场价格，多空）
 
 ```{r}
-# 生成两个data.table: out_dt & trade_dt
-# out_dt: 每天结束时的账户状态（已平仓利润，头寸，浮盈浮亏，保证金占用，其他信息）
-# trade_dt: 每笔交易明细（入场时间，入场价格，离场时间，离场价格，多空）
 out_dt <- list.stack(out, data.table = TRUE)
-out_dt[, net_profit := closed_profit + position_profit - fee]
+out_dt[, net_profit := closed_profit + position_profit - fee]  # 净利润
 #View(out_dt)
 
 trades_dt <- list.stack(trades, data.table = TRUE)
@@ -322,10 +372,34 @@ trades_dt[, profit := side * (leave_price - enter_price) - commission]
 #View(trades_dt)
 ```
 
+画一个交易的图像看一下
+
+```{r}
+# 找出利润最大的一次交易
+trades_dt[which.max(trades_dt$profit), .(enter_date, leave_date)]
+
+# 画图看一下这次交易的情况
+et_day <- 20110701
+lv_day <- 20111030
+# et_day <- 20160101
+# lv_day <- 20161231
+
+dtplot <- copy(out_dt[date >= et_day & date <= lv_day])
+dtplot[, time_index := 1:.N]
+pe <- ggplot(dtplot, aes(x = time_index)) + 
+  geom_linerange(aes(ymin = low, ymax = high)) + 
+  geom_point(aes(y = N_high), color = "red") + 
+  geom_point(aes(y = N_low), color = "green") + 
+  geom_line(aes(y = stop_price), color = "blue", size = .9, na.rm = TRUE)
+pe
+```
+
+
 
 ```{r}
 # 资金曲线
 plot(out_dt$net_profit, type = "l")
+
 # 每笔交易利润分布：符合趋势追踪类策略的特点
 hist(trades_dt$profit, breaks = 50)
 ```
@@ -347,7 +421,7 @@ hist(trades_dt$profit, breaks = 50)
 这里算几个最常见的指标：
 
 ```{r}
-# 计算每日收益率：
+# 计算每日收益率：（不加杠杆，return = 当日净收益/合约市值的60日移动平均）
 out_dt[, profit := c(0, diff(net_profit))]
 out_dt[, market_value_MA60 := zoo::na.fill(TTR::SMA(market_value, n = 60), fill = "extend")]
 out_dt[, return := profit / market_value_MA60]
@@ -394,6 +468,20 @@ win_loss_ratio
 )
 cat(indicators)
 ```
+
+```{r}
+par(mfrow = c(3, 1))
+plot(out_dt$net_profit, type = "l", main = "account")  # 账户资金曲线
+plot(out_dt$return, type = "h", main = "daily return")  # 日度收益率
+plot(out_dt$position, type = "h", main = "position")  # 每日postion
+par(mfrow = c(1, 1))
+plot(cumprod(out_dt$return + 1), type = "l", col = "red", main = "cumulative return")  # 累计收益率 乘
+lines(cumsum(out_dt$return) + 1, type = "l", col = "blue")  # 累计收益率 加
+```
+
+
+### 不写for循环，快速得到净值曲线的方法
+经@刘天宇提醒，有一种快速得到净值曲线的办法：向量化生成每日的买卖信号（1， 0， -1），然后和每日收益率相乘，再cumprod，直接就能得到净值曲线。方法简单直观且速度非常快。
 
 
 

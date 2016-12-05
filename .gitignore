@@ -1,6 +1,7 @@
 *.html
 wiser_quant_files
 wiser_quant.md
+*.csv
 
 # History files
 .Rhistory

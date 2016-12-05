@@ -1,5 +1,5 @@
-starting worker pid=563 on localhost:11742 at 13:45:44.908
-starting worker pid=571 on localhost:11742 at 13:45:45.046
+starting worker pid=14672 on localhost:11726 at 17:35:03.250
+starting worker pid=14680 on localhost:11726 at 17:35:03.396
 Start Running [N = 10, lossrate = 0.005] ... final_profit: 43365.6288360007 
 Start Running [N = 20, lossrate = 0.005] ... final_profit: 36733.1711160006 
 Start Running [N = 30, lossrate = 0.005] ... final_profit: 32139.2151760005 
