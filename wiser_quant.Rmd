@@ -510,6 +510,7 @@ para_lst <-
   expand.grid(N = N_set, lossrate = lossrate_set) %>>% 
   list.parse()   # 参数集合 
 
+#para_lst[[30]] <- list(N = 10000, lossrate = NA_real_) # 报错
 #str(para_lst)
 #result <- RunBackTest(para = para_lst[[1]])
 #result <- RunBackTest(para = para_lst[[100]])
@@ -520,6 +521,7 @@ library(doParallel)
 file.create("log.txt")  # 日志文件
 detectCores()  # 看一下你的电脑有几个核
 cl <- makeCluster(2, outfile = "log.txt")  # 使用2个核，并指定outfile
+registerDoParallel(cl)
 clusterExport(cl, varlist = gvars) # 将全局变量分发到各个核，在每个核上加载必要的包
 clusterEvalQ(cl, expr = {
   library(data.table)
@@ -538,7 +540,7 @@ results <- foreach(x = para_lst) %dopar%
       return(rst)
     },
     error = function(e) {
-      error_into <- sprintf("When running [ N = %s, lossrate = %s ] Raised Error : %s \n", x$N, x$K, x$ATR_N, e)
+      error_into <- sprintf("When running [ N = %s, lossrate = %s ] Raised Error : %s \n", x$N, x$lossrate, e)
         cat(error_into, file = "log.txt", append = TRUE)
         return(error_into)
     }
